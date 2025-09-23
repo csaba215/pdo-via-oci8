@@ -212,7 +212,7 @@ class ConnectionTest extends TestCase
     }
 
     /**
-     * Test multiple cases with ? replacement within Oracle strings, q-quoted strings and comments
+     * Test multiple cases with ? replacement within Oracle strings, q-quoted strings and comments.
      *
      * @dataProvider provideSqlCases
      */
@@ -266,8 +266,8 @@ class ConnectionTest extends TestCase
 
         // 6) /* block ? */ SELECT ? FROM dual; → only one ? replaced
         yield 'block_comment_then_placeholder' => [[
-            'input_sql' => "/* block ? */ SELECT ? AS test FROM dual;",
-            'expected_sql' => "/* block ? */ SELECT :p0 AS test FROM dual;",
+            'input_sql' => '/* block ? */ SELECT ? AS test FROM dual;',
+            'expected_sql' => '/* block ? */ SELECT :p0 AS test FROM dual;',
             'message' => 'Question mark in /* ... */ must be ignored; placeholder after must be rewritten.',
         ]];
 
@@ -280,15 +280,15 @@ class ConnectionTest extends TestCase
     }
 
     /**
-     * Test ? replacement within q-quoted strings, comments and plain positional in same SQL
+     * Test ? replacement within q-quoted strings, comments and plain positional in same SQL.
      */
     public function testNumberingIsSequentialOutsideSkips(): void
     {
-        $inputSql = <<<SQL
+        $inputSql = <<<'SQL'
             /* ? in comment */ SELECT a FROM t WHERE x = ? AND y = ? AND z = q'[keep?]';
             SQL;
 
-        $expectedSql = <<<SQL
+        $expectedSql = <<<'SQL'
             /* ? in comment */ SELECT a FROM t WHERE x = :p0 AND y = :p1 AND z = q'[keep?]';
             SQL;
 

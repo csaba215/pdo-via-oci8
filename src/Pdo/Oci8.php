@@ -353,9 +353,9 @@ class Oci8 extends PDO
             // simple strings with '' escape
             ."|'(?:''|[^'])*'"
             // comments /* ... */
-            ."|/\\*.*?\\*/"
+            .'|/\\*.*?\\*/'
             // comments -- ...
-            ."|--[^\\r\\n]*";
+            .'|--[^\\r\\n]*';
 
         // Final regexp: skip (*SKIP)(*F) | replace true '?'
         $pattern = "~(?:$skip)(*SKIP)(*F)|\\?~sx";
