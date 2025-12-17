@@ -1,3 +1,11 @@
+## [3.7.3](https://github.com/yajra/pdo-via-oci8/compare/v3.7.2...v3.7.3) (2025-12-17)
+
+
+### Bug Fixes
+
+* Apply fixes from StyleCI ([#165](https://github.com/yajra/pdo-via-oci8/issues/165)) ([af86e70](https://github.com/yajra/pdo-via-oci8/commit/af86e708f806413cf94706e4a930f81f1c8f5040))
+* when CLOB is NULL ([#164](https://github.com/yajra/pdo-via-oci8/issues/164)) ([6ad891c](https://github.com/yajra/pdo-via-oci8/commit/6ad891c045f5ec1d143a60ccd0b7515909dda4e5))
+
 # PDO-VIA-OCI8 Changelog
 
 ## [UNRELEASED]
