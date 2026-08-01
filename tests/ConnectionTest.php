@@ -211,6 +211,44 @@ class ConnectionTest extends TestCase
         $this->assertEquals($expectedIdentifier, $foundClientIdentifier);
     }
 
+    public function testNativeBooleanFieldsAreConvertedForEveryFetchMode(): void
+    {
+        $version = $this->con->query(
+            "SELECT version FROM product_component_version WHERE product LIKE 'Oracle Database%' AND ROWNUM = 1"
+        )->fetchColumn();
+
+        if ((int) $version < 23) {
+            $this->markTestSkipped('Native SQL Boolean fields require Oracle Database 23 or newer.');
+        }
+
+        $this->con->setAttribute(PDO::ATTR_STRINGIFY_FETCHES, false);
+        $sql = 'SELECT TRUE AS true_value, FALSE AS false_value, CAST(NULL AS BOOLEAN) AS null_value FROM dual';
+
+        $assoc = $this->con->query($sql)->fetch(PDO::FETCH_ASSOC);
+        $this->assertSame(true, $assoc['TRUE_VALUE']);
+        $this->assertSame(false, $assoc['FALSE_VALUE']);
+        $this->assertNull($assoc['NULL_VALUE']);
+
+        $numeric = $this->con->query($sql)->fetch(PDO::FETCH_NUM);
+        $this->assertSame([true, false, null], $numeric);
+
+        $both = $this->con->query($sql)->fetch(PDO::FETCH_BOTH);
+        $this->assertSame(true, $both[0]);
+        $this->assertSame(true, $both['TRUE_VALUE']);
+        $this->assertSame(false, $both[1]);
+        $this->assertSame(false, $both['FALSE_VALUE']);
+        $this->assertNull($both[2]);
+        $this->assertNull($both['NULL_VALUE']);
+
+        $object = $this->con->query($sql)->fetch(PDO::FETCH_OBJ);
+        $this->assertSame(true, $object->TRUE_VALUE);
+        $this->assertSame(false, $object->FALSE_VALUE);
+        $this->assertNull($object->NULL_VALUE);
+
+        $falseValue = $this->con->query('SELECT FALSE AS false_value FROM dual')->fetchColumn();
+        $this->assertSame(false, $falseValue);
+    }
+
     /**
      * Test multiple cases with ? replacement within Oracle strings, q-quoted strings and comments.
      *

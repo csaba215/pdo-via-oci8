@@ -110,6 +110,13 @@ class Statement extends PDOStatement
     private array $blobBindings = [];
 
     /**
+     * Zero-based indexes and names of native Boolean result columns.
+     *
+     * @var array<int, string>|null
+     */
+    private ?array $booleanColumns = null;
+
+    /**
      * Constructor.
      *
      * @param  resource  $sth  Statement handle created with oci_parse()
@@ -410,9 +417,9 @@ class Statement extends PDOStatement
      *
      * @param  int|null  $colNumber  0-indexed number of the column you wish to retrieve
      *                               from the row. If no value is supplied, it fetches the first column.
-     * @return string Returns a single column in the next row of a result set.
+     * @return mixed Returns a single column in the next row of a result set.
      */
-    public function fetchColumn(?int $colNumber = null): string
+    public function fetchColumn(?int $colNumber = null): mixed
     {
         $this->setFetchMode(PDO::FETCH_COLUMN, $colNumber);
 
@@ -472,6 +479,7 @@ class Statement extends PDOStatement
                 if ($rs === false) {
                     return false;
                 }
+                $rs = $this->castBooleanColumns($rs, $stringifyFetch);
                 if ($toLowercase) {
                     $rs = array_change_key_case($rs);
                 }
@@ -490,6 +498,7 @@ class Statement extends PDOStatement
                 if ($rs === false) {
                     return false;
                 }
+                $rs = $this->castBooleanColumns($rs, $stringifyFetch);
                 if ($toLowercase) {
                     $rs = array_change_key_case($rs);
                 }
@@ -508,6 +517,7 @@ class Statement extends PDOStatement
                 if ($rs === false) {
                     return false;
                 }
+                $rs = $this->castBooleanColumns($rs, $stringifyFetch);
                 if ($this->returnLobs && is_array($rs)) {
                     foreach ($rs as $field => $value) {
                         if (is_object($value)) {
@@ -527,7 +537,7 @@ class Statement extends PDOStatement
                         return $this->loadLob($value);
                     }
 
-                    return $value;
+                    return $this->castBooleanColumn($value, $colNo, $stringifyFetch);
                 } else {
                     return false;
                 }
@@ -595,6 +605,8 @@ class Statement extends PDOStatement
                         } else {
                             if (oci_field_type($this->sth, $ociFieldIndex + 1) == 'NUMBER') {
                                 $object->$field = $this->castToNumeric($value);
+                            } elseif ($this->isBooleanColumn($ociFieldIndex)) {
+                                $object->$field = $this->castToBoolean($value);
                             } else {
                                 $object->$field = $value;
                             }
@@ -643,6 +655,86 @@ class Statement extends PDOStatement
         }
 
         return $value;
+    }
+
+    /**
+     * Convert native Oracle Boolean fields in an array result.
+     */
+    private function castBooleanColumns(array $row, bool $stringifyFetch): array
+    {
+        if ($stringifyFetch) {
+            return $row;
+        }
+
+        foreach ($this->getBooleanColumns() as $index => $name) {
+            if (array_key_exists($index, $row)) {
+                $row[$index] = $this->castToBoolean($row[$index]);
+            }
+
+            if (array_key_exists($name, $row)) {
+                $row[$name] = $this->castToBoolean($row[$name]);
+            }
+        }
+
+        return $row;
+    }
+
+    /**
+     * Convert a native Oracle Boolean field in a column result.
+     */
+    private function castBooleanColumn(mixed $value, int $column, bool $stringifyFetch): mixed
+    {
+        if (! $stringifyFetch && $this->isBooleanColumn($column)) {
+            return $this->castToBoolean($value);
+        }
+
+        return $value;
+    }
+
+    /**
+     * Determine whether a zero-based result column is a native Oracle Boolean.
+     */
+    private function isBooleanColumn(int $column): bool
+    {
+        return array_key_exists($column, $this->getBooleanColumns());
+    }
+
+    /**
+     * Get native Oracle Boolean result columns from OCI metadata.
+     *
+     * @return array<int, string>
+     */
+    private function getBooleanColumns(): array
+    {
+        if ($this->booleanColumns !== null) {
+            return $this->booleanColumns;
+        }
+
+        $this->booleanColumns = [];
+
+        if (! defined('SQLT_BOL')) {
+            return $this->booleanColumns;
+        }
+
+        for ($column = 1; $column <= oci_num_fields($this->sth); $column++) {
+            if (oci_field_type_raw($this->sth, $column) === SQLT_BOL) {
+                $this->booleanColumns[$column - 1] = oci_field_name($this->sth, $column);
+            }
+        }
+
+        return $this->booleanColumns;
+    }
+
+    /**
+     * Convert OCI's textual native Boolean representation to a PHP Boolean.
+     */
+    private function castToBoolean(mixed $value): mixed
+    {
+        return match ($value) {
+            'TRUE' => true,
+            'FALSE' => false,
+            default => $value,
+        };
     }
 
     /**
@@ -757,6 +849,8 @@ class Statement extends PDOStatement
      */
     public function execute(?array $inputParams = null): bool
     {
+        $this->booleanColumns = null;
+
         $mode = OCI_COMMIT_ON_SUCCESS;
         if ($this->connection->inTransaction() || count($this->blobObjects) > 0) {
             $mode = OCI_DEFAULT;
