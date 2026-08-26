@@ -18,6 +18,8 @@ use Yajra\Pdo\Oci8\Exceptions\Oci8Exception;
  */
 class Statement extends PDOStatement
 {
+    private const LOB_STREAM_CHUNK_SIZE = 8192;
+
     /**
      * Statement handler.
      *
@@ -108,6 +110,13 @@ class Statement extends PDOStatement
      * @var array
      */
     private array $blobBindings = [];
+
+    /**
+     * BLOB bindings whose value may be a stream at execution time.
+     *
+     * @var array<string, true>
+     */
+    private array $streamableBlobBindings = [];
 
     /**
      * Constructor.
@@ -281,6 +290,14 @@ class Statement extends PDOStatement
             $parameter = ':p'.intval($parameter - 1);
         }
 
+        unset(
+            $this->blobBindings[$parameter],
+            $this->blobObjects[$parameter],
+            $this->streamableBlobBindings[$parameter]
+        );
+
+        $ociVariable = &$variable;
+
         // Adapt the type
         switch ($dataType) {
             case PDO::PARAM_BOOL:
@@ -302,12 +319,11 @@ class Statement extends PDOStatement
             case PDO::PARAM_LOB:
                 $ociType = OCI_B_BLOB;
 
-                $this->blobBindings[$parameter] = $variable;
-
-                $variable = $this->connection->getNewDescriptor();
-                $variable->writeTemporary($this->blobBindings[$parameter], OCI_TEMP_BLOB);
-
-                $this->blobObjects[$parameter] = &$variable;
+                $this->blobBindings[$parameter] = &$variable;
+                $this->streamableBlobBindings[$parameter] = true;
+                $this->blobObjects[$parameter] = $this->connection->getNewDescriptor();
+                $ociVariable = &$this->blobObjects[$parameter];
+                $ociVariable->writeTemporary('', OCI_TEMP_BLOB);
                 break;
 
             case PDO::PARAM_STMT:
@@ -353,11 +369,11 @@ class Statement extends PDOStatement
                 break;
         }
 
-        if (is_array($variable)) {
-            return $this->bindArray($parameter, $variable, count($variable), $maxLength, $ociType);
+        if (is_array($ociVariable)) {
+            return $this->bindArray($parameter, $ociVariable, count($ociVariable), $maxLength, $ociType);
         }
 
-        $this->bindings[] = &$variable;
+        $this->bindings[] = &$ociVariable;
 
         if ($maxLength === null) {
             // PDOStatement->bindParam(param: int|string, &var: mixed, [type: int = PDO::PARAM_STR], [maxLength: int = null], [driverOptions: mixed = null])
@@ -365,7 +381,7 @@ class Statement extends PDOStatement
             $maxLength = -1;
         }
 
-        return oci_bind_by_name($this->sth, $parameter, $variable, $maxLength, $ociType);
+        return oci_bind_by_name($this->sth, $parameter, $ociVariable, $maxLength, $ociType);
     }
 
     /**
@@ -757,11 +773,6 @@ class Statement extends PDOStatement
      */
     public function execute(?array $inputParams = null): bool
     {
-        $mode = OCI_COMMIT_ON_SUCCESS;
-        if ($this->connection->inTransaction() || count($this->blobObjects) > 0) {
-            $mode = OCI_DEFAULT;
-        }
-
         // Set up bound parameters, if passed in.
         if (is_array($inputParams)) {
             foreach ($inputParams as $key => $value) {
@@ -770,12 +781,28 @@ class Statement extends PDOStatement
             }
         }
 
+        $mode = OCI_COMMIT_ON_SUCCESS;
+        if ($this->connection->inTransaction() || count($this->blobObjects) > 0) {
+            $mode = OCI_DEFAULT;
+        }
+
+        foreach ($this->streamableBlobBindings as $param => $_) {
+            $value = $this->blobBindings[$param];
+
+            if ($this->isStream($value)) {
+                $this->writeBlobStream($this->blobObjects[$param], $value, $param);
+            } else {
+                $this->prepareBlobForWriting($this->blobObjects[$param], $param);
+                $this->blobObjects[$param]->save($value);
+            }
+        }
+
         $result = @oci_execute($this->sth, $mode);
 
-        // Save blob objects if set.
+        // Save non-stream LOB objects if set.
         if ($result && count($this->blobObjects) > 0) {
             foreach ($this->blobObjects as $param => $blob) {
-                if ($blob instanceof \OCILob) {
+                if ($blob instanceof \OCILob && ! $this->isStream($this->blobBindings[$param])) {
                     $blob->save($this->blobBindings[$param]);
                 }
             }
@@ -799,6 +826,55 @@ class Statement extends PDOStatement
         }
 
         return $result;
+    }
+
+    /**
+     * Write a bound PHP stream to an Oracle LOB descriptor.
+     *
+     * @param  resource  $stream
+     */
+    private function writeBlobStream(\OCILob $lob, mixed $stream, int|string $parameter): void
+    {
+        $this->prepareBlobForWriting($lob, $parameter);
+
+        while (! feof($stream)) {
+            $chunk = fread($stream, self::LOB_STREAM_CHUNK_SIZE);
+
+            if ($chunk === false || ($chunk === '' && ! feof($stream))) {
+                throw new Oci8Exception("Unable to read stream bound to LOB parameter $parameter");
+            }
+
+            $offset = 0;
+            $length = strlen($chunk);
+
+            while ($offset < $length) {
+                $written = $lob->write(substr($chunk, $offset));
+
+                if ($written === false || $written === 0) {
+                    throw new Oci8Exception("Unable to write stream bound to LOB parameter $parameter");
+                }
+
+                $offset += $written;
+            }
+        }
+    }
+
+    /**
+     * Truncate and rewind a reusable BLOB descriptor before writing to it.
+     */
+    private function prepareBlobForWriting(\OCILob $lob, int|string $parameter): void
+    {
+        if (! $lob->truncate() || ! $lob->rewind()) {
+            throw new Oci8Exception("Unable to prepare LOB binding $parameter for writing");
+        }
+    }
+
+    /**
+     * Determine whether a value is an open PHP stream.
+     */
+    private function isStream(mixed $value): bool
+    {
+        return is_resource($value) && get_resource_type($value) === 'stream';
     }
 
     /**

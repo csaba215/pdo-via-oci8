@@ -193,6 +193,130 @@ class ConnectionTest extends TestCase
         $this->assertTrue($stmt->bindParam(':email', $email, PDO::PARAM_STR));
     }
 
+    public function testBindParamAcceptsPhpStreamForBlobInput(): void
+    {
+        $table = 'PDO_OCI8_STREAM_INPUT_TEST';
+        $contents = str_repeat("input\x00blob\xffcontent", 1024);
+        $offset = 7;
+        $expected = substr($contents, $offset);
+
+        $this->con->exec("CREATE TABLE $table (id NUMBER PRIMARY KEY, content BLOB)");
+
+        try {
+            $stream = null;
+
+            $id = 1;
+            $stmt = $this->con->prepare("INSERT INTO $table (id, content) VALUES (:id, :content)");
+
+            $this->assertTrue($stmt->bindParam(':id', $id, PDO::PARAM_INT));
+            $this->assertTrue($stmt->bindParam(':content', $stream, PDO::PARAM_LOB));
+
+            $stream = fopen('php://memory', 'r+b');
+            fwrite($stream, $contents);
+            rewind($stream);
+            $this->assertIsResource($stream);
+            $this->assertSame(0, ftell($stream));
+            $this->assertSame(0, fseek($stream, $offset));
+            $this->assertTrue($stmt->execute());
+            $this->assertTrue(feof($stream));
+            $this->assertSame($expected, $this->con->query("SELECT content FROM $table WHERE id = 1")->fetchColumn());
+
+            $id = 2;
+            $this->assertTrue($stmt->execute());
+            $this->assertSame(
+                0,
+                (int) $this->con->query("SELECT DBMS_LOB.GETLENGTH(content) FROM $table WHERE id = 2")->fetchColumn()
+            );
+
+            fclose($stream);
+            $null = null;
+            $id = 3;
+            $this->assertTrue($stmt->bindParam(':content', $null, PDO::PARAM_NULL));
+            $this->assertTrue($stmt->execute());
+            $this->assertSame(
+                1,
+                (int) $this->con->query("SELECT COUNT(*) FROM $table WHERE id = 3 AND content IS NULL")->fetchColumn()
+            );
+        } finally {
+            if (isset($stream) && is_resource($stream)) {
+                fclose($stream);
+            }
+
+            $this->con->exec("DROP TABLE $table");
+        }
+    }
+
+    public function testBindParamTruncatesReusedBlobForShorterString(): void
+    {
+        $table = 'PDO_OCI8_REUSED_BLOB_TEST';
+        $content = 'the first, longer blob value';
+
+        $this->con->exec("CREATE TABLE $table (id NUMBER PRIMARY KEY, content BLOB)");
+
+        try {
+            $id = 1;
+            $stmt = $this->con->prepare("INSERT INTO $table (id, content) VALUES (:id, :content)");
+
+            $this->assertTrue($stmt->bindParam(':id', $id, PDO::PARAM_INT));
+            $this->assertTrue($stmt->bindParam(':content', $content, PDO::PARAM_LOB));
+            $this->assertTrue($stmt->execute());
+
+            $id = 2;
+            $content = 'short';
+            $this->assertTrue($stmt->execute());
+
+            $this->assertSame(
+                $content,
+                $this->con->query("SELECT content FROM $table WHERE id = 2")->fetchColumn()
+            );
+        } finally {
+            $this->con->exec("DROP TABLE $table");
+        }
+    }
+
+    public function testBindParamAcceptsLargePhpStreamForBlobWithLimitedMemory(): void
+    {
+        $table = 'PDO_OCI8_LARGE_BLOB_TEST';
+        $blobSize = 512 * 1024 * 1024;
+        $previousMemoryLimit = ini_get('memory_limit');
+        $tableCreated = false;
+
+        try {
+            $this->assertNotFalse(ini_set('memory_limit', '128M'));
+            $this->assertSame('128M', ini_get('memory_limit'));
+
+            $stream = tmpfile();
+            $this->assertIsResource($stream);
+            $this->assertTrue(ftruncate($stream, $blobSize));
+            $this->assertTrue(rewind($stream));
+
+            $this->con->exec("CREATE TABLE $table (id NUMBER PRIMARY KEY, content BLOB)");
+            $tableCreated = true;
+
+            $stmt = $this->con->prepare("INSERT INTO $table (id, content) VALUES (1, :content)");
+
+            $this->assertTrue($stmt->bindParam(':content', $stream, PDO::PARAM_LOB));
+            $this->assertIsResource($stream);
+            $this->assertTrue($stmt->execute());
+            $this->assertSame(
+                $blobSize,
+                (int) $this->con->query("SELECT DBMS_LOB.GETLENGTH(content) FROM $table WHERE id = 1")->fetchColumn()
+            );
+        } finally {
+            if (isset($stream) && is_resource($stream)) {
+                fclose($stream);
+            }
+
+            try {
+                if ($tableCreated) {
+                    $this->con->exec("DROP TABLE $table");
+                }
+            } finally {
+                ini_set('memory_limit', (string) $previousMemoryLimit);
+            }
+        }
+    }
+
     public function testSetConnectionIdentifier(): void
     {
         $expectedIdentifier = 'PDO_OCI8_CON';
