@@ -669,10 +669,16 @@ class Statement extends PDOStatement
     private function loadLob(mixed $lob): mixed
     {
         try {
-            return $lob->load();
+            $value = $lob->load();
         } catch (Exception $e) {
             return $lob;
         }
+
+        if (is_string($value)) {
+            $lob->free();
+        }
+
+        return $value;
     }
 
     /**
