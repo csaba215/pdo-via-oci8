@@ -110,6 +110,11 @@ class Statement extends PDOStatement
     private array $blobBindings = [];
 
     /**
+     * Whether the underlying OCI statement has been released.
+     */
+    private bool $closed = false;
+
+    /**
      * Constructor.
      *
      * @param  resource  $sth  Statement handle created with oci_parse()
@@ -134,6 +139,14 @@ class Statement extends PDOStatement
         if ($fetchMode) {
             $this->setFetchMode($fetchMode);
         }
+    }
+
+    /**
+     * Release the OCI statement before its bound LOB descriptors.
+     */
+    public function __destruct()
+    {
+        $this->closeCursor();
     }
 
     /**
@@ -971,7 +984,13 @@ class Statement extends PDOStatement
      */
     public function closeCursor(): bool
     {
-        return oci_free_cursor($this->sth);
+        if ($this->closed) {
+            return true;
+        }
+
+        $this->closed = true;
+
+        return oci_free_statement($this->sth);
     }
 
     /**
