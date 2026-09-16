@@ -18,6 +18,9 @@ use Yajra\Pdo\Oci8\Exceptions\Oci8Exception;
  */
 class Statement extends PDOStatement
 {
+    /** @internal */
+    public const OPTION_MAY_REPLACE_LOB_LOCATOR = 'yajra.pdo-via-oci8.may-replace-lob-locator';
+
     /**
      * Statement handler.
      *
@@ -110,6 +113,11 @@ class Statement extends PDOStatement
     private array $blobBindings = [];
 
     /**
+     * Whether executing this statement may replace a bound LOB locator.
+     */
+    private bool $mayReplaceLobLocator;
+
+    /**
      * Whether the underlying OCI statement has been released.
      */
     private bool $closed = false;
@@ -133,6 +141,8 @@ class Statement extends PDOStatement
 
         $this->sth = $sth;
         $this->connection = $connection;
+        $this->mayReplaceLobLocator = $options[self::OPTION_MAY_REPLACE_LOB_LOCATOR] ?? true;
+        unset($options[self::OPTION_MAY_REPLACE_LOB_LOCATOR]);
         $this->options = $options;
 
         $fetchMode = $connection->getAttribute(PDO::ATTR_DEFAULT_FETCH_MODE);
@@ -782,8 +792,9 @@ class Statement extends PDOStatement
      */
     public function execute(?array $inputParams = null): bool
     {
+        $hasWritableLob = $this->mayReplaceLobLocator && count($this->blobObjects) > 0;
         $mode = OCI_COMMIT_ON_SUCCESS;
-        if ($this->connection->inTransaction() || count($this->blobObjects) > 0) {
+        if ($this->connection->inTransaction() || $hasWritableLob) {
             $mode = OCI_DEFAULT;
         }
 
@@ -798,7 +809,7 @@ class Statement extends PDOStatement
         $result = @oci_execute($this->sth, $mode);
 
         // Save blob objects if set.
-        if ($result && count($this->blobObjects) > 0) {
+        if ($result && $hasWritableLob) {
             foreach ($this->blobObjects as $param => $blob) {
                 if ($blob instanceof \OCILob) {
                     $blob->save($this->blobBindings[$param]);
@@ -806,7 +817,7 @@ class Statement extends PDOStatement
             }
         }
 
-        if (! $this->connection->inTransaction() && count($this->blobObjects) > 0) {
+        if (! $this->connection->inTransaction() && $hasWritableLob) {
             $this->connection->commit();
         }
 
