@@ -468,7 +468,7 @@ class Statement extends PDOStatement
         // Determine the fetch mode
         switch ($fetchMode) {
             case PDO::FETCH_BOTH:
-                $rs = oci_fetch_array($this->sth); // Fetches both; nice!
+                $rs = $this->fetchArray(OCI_BOTH);
                 if ($rs === false) {
                     return false;
                 }
@@ -486,7 +486,7 @@ class Statement extends PDOStatement
                 return $rs;
 
             case PDO::FETCH_ASSOC:
-                $rs = oci_fetch_assoc($this->sth);
+                $rs = $this->fetchArray(OCI_ASSOC);
                 if ($rs === false) {
                     return false;
                 }
@@ -504,7 +504,7 @@ class Statement extends PDOStatement
                 return $rs;
 
             case PDO::FETCH_NUM:
-                $rs = oci_fetch_row($this->sth);
+                $rs = $this->fetchArray(OCI_NUM);
                 if ($rs === false) {
                     return false;
                 }
@@ -519,7 +519,7 @@ class Statement extends PDOStatement
                 return $rs;
 
             case PDO::FETCH_COLUMN:
-                $rs = oci_fetch_row($this->sth);
+                $rs = $this->fetchArray(OCI_NUM);
                 $colNo = $this->fetchColNo;
                 if (is_array($rs) && array_key_exists($colNo, $rs)) {
                     $value = $rs[$colNo];
@@ -536,7 +536,7 @@ class Statement extends PDOStatement
             case PDO::FETCH_INTO:
             case PDO::FETCH_CLASS:
             case PDO::FETCH_CLASS | PDO::FETCH_PROPS_LATE:
-                $rs = oci_fetch_assoc($this->sth);
+                $rs = $this->fetchArray(OCI_ASSOC);
                 if ($rs === false) {
                     return false;
                 }
@@ -613,6 +613,18 @@ class Statement extends PDOStatement
     }
 
     /**
+     * Fetch a row using the requested OCI array mode.
+     */
+    private function fetchArray(int $mode): array|false
+    {
+        if ($this->returnLobs) {
+            $mode |= OCI_RETURN_LOBS;
+        }
+
+        return oci_fetch_array($this->sth, $mode | OCI_RETURN_NULLS);
+    }
+
+    /**
      * Retrieve stringify boolean in attribute .
      *
      * @return bool The attribute value.
@@ -669,16 +681,10 @@ class Statement extends PDOStatement
     private function loadLob(mixed $lob): mixed
     {
         try {
-            $value = $lob->load();
+            return $lob->load();
         } catch (Exception $e) {
             return $lob;
         }
-
-        if (is_string($value)) {
-            $lob->free();
-        }
-
-        return $value;
     }
 
     /**

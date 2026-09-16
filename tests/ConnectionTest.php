@@ -193,6 +193,36 @@ class ConnectionTest extends TestCase
         $this->assertTrue($stmt->bindParam(':email', $email, PDO::PARAM_STR));
     }
 
+    public function testClobInputCanBeUsedWhileFetchingClob(): void
+    {
+        $table = 'PDO_OCI8_CLOB_INPUT_TEST';
+        $content = str_repeat('x', 5000);
+
+        $this->con->exec("CREATE TABLE $table (id NUMBER PRIMARY KEY, content CLOB)");
+
+        try {
+            $insert = $this->con->prepare("INSERT INTO $table (id, content) VALUES (1, :content)");
+            $this->assertTrue($insert->bindValue(':content', $content, SQLT_CLOB));
+            $this->assertTrue($insert->execute());
+
+            $select = $this->con->prepare(
+                "SELECT id, content FROM $table WHERE DBMS_LOB.COMPARE(content, :content) = 0"
+            );
+            $this->assertTrue($select->bindValue(':content', $content, SQLT_CLOB));
+            $this->assertTrue($select->execute());
+
+            $row = $select->fetch(PDO::FETCH_OBJ);
+
+            $this->assertIsObject($row);
+            $this->assertSame(1, $row->ID);
+            $this->assertSame($content, $row->CONTENT);
+
+            unset($select);
+        } finally {
+            $this->con->exec("DROP TABLE $table");
+        }
+    }
+
     public function testSetConnectionIdentifier(): void
     {
         $expectedIdentifier = 'PDO_OCI8_CON';
